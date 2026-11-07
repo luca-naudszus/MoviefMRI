@@ -18,9 +18,10 @@ import re
 import sys
 from pathlib import Path
 
-import nilearn
 import numpy as np
 import pandas as pd
+from nilearn.image import clean_img, smooth_img
+from nilearn.interfaces.fmriprep import load_confounds
 
 # Denoising strategies
 STRATEGIES: dict[str, dict] = {
@@ -36,10 +37,58 @@ def find_runs():
     #TODO: locate files
     return
 
-# Denoise a single run
-def denoise_run():
-    #TODO: define function
+def get_tr():
+    #TODO: Get TR
     return
+
+def get_mask():
+    #TODO: Get mask
+
+def replace_fn():
+    #TODO: Build filename by replacing end of filename
+
+# Denoise a single run
+def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path,
+                kwargs: dict, smoothing: float | None, detrend: bool,
+                standardize: bool, low_pass: float, high_pass: float):
+    bold_rel = bold.relative_to(fmriprep_dir)
+    desc = re.search(, bold.name) #TODO: add re search
+    out_file = out_dir / bold_rel.parent / bold.name.replace(desc, "_desc_denoised_bold")
+    qc = dict(run=bold.name, output=str(out_file))
+
+    tr = get_tr(bold)
+    mask = get_mask(bold)
+
+    confounds, sample_mask = load_confounds(str(bold), kwargs)
+
+    n_vols = len(confounds)
+    n_kept = n_vols if sample_mask is None else len(sample_mask)
+    conf_tsv = replace_fn(bold, desc, "_desc-confounds_timeseries.tsv")
+
+    fd = pd.read_csv(conf_tsv, sep="\t")["framewise_discplacement"]
+    qc.update(tr=tr, n_volumes=n_vols, n_kept=n_kept,
+              n_regressors=confounds.shape[1],
+              mean_fd=round(float(fd.mean()), 3))
+
+    img = bold
+    if smoothing:
+        img = smooth_img(bold, fwhm=smoothing)
+
+    cleaned = clean_img(img, confounds=confounds, detrend=detrend,
+                        standardize=standardize, low_pass=low_pass, high_pass=high_pass,
+                        t_r = tr, mask_img = mask, clean__sample_mask = sample_mask,
+    )
+
+    out_file.parent.mkdir()
+    cleaned.to_filename(out_file)
+    #TODO: reset header?
+
+    confounds.to_csv(replace_fn(out_file, "_desc-denoised_bold",
+                                "_desc-denoised_regressors.tsv"), sep = "\t", index=False)
+
+    #TODO: Create dataset description.json
+
+    return qc
 
 # CLI
 def parse_args(argv = None):
