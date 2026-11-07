@@ -33,9 +33,21 @@ STRATEGIES: dict[str, dict] = {
 }
 
 # Locate files
-def find_runs():
-    #TODO: locate files
-    return
+def find_runs(fmriprep_dir: Path, space: str, participants: list[str],
+              tasks: list[str], sessions: list[str]):
+    pattern = f"*_space-{space}_desc-preproc_bold.nii*"
+    runs = sorted(fmriprep_dir.glob(f"sub-*/**/func/{pattern}"))
+    keep = []
+    for r in runs:
+        files = dict.re.findall(r"([a-ZA-Z]+)-([a-zA-Z0-9]+)", r.name.split(".")[0])
+        if participants and r.get("sub") not in participants:
+            continue
+        if tasks and r.get("task") not in tasks:
+            continue
+        if sessions and r.get("session") not in sessions:
+            continue
+        keep.append(r)
+    return keep
 
 def get_tr():
     #TODO: Get TR
@@ -45,9 +57,13 @@ def get_mask():
     #TODO: Get mask
     return
 
-def replace_fn():
-    #TODO: Build filename by replacing end of filename
-    return
+def replace_fn(bold: Path, old: str, new: str):
+    name = bold.name
+    for extension in (".nii.gz", ".nii"):
+        if name.endswith(extension):
+            name = name[: -len(extension)]
+            break
+    return bold.with_name(name.replace(old, new))
 
 # Denoise a single run
 def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path,
