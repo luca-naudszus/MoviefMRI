@@ -50,15 +50,14 @@ def parse_args(argv = None):
 
 def main(argv=None):
     args = parse_args(argv)
-    strategy = args.strategy
-    strategy_args = None #TODO: how do I get strategy arguments?
+    kwargs = dict(STRATEGIES[args.strategy])
     fmriprep_dir = args.fmriprepdir
     out_dir = args.output_dir / args.strategy
     out_dir.mkdir()
     runs = find_runs(fmriprep_dir, args.space, args.participant, args.task, args.session)
 
     for r in runs:
-        out = denoise_run(r, fmriprep_dir, out_dir, args.strategy, strategy_args,
+        out = denoise_run(r, fmriprep_dir, out_dir, args.strategy, kwargs,
                         args.low_pass, args.high_pass, args.smoothing, args.standardize,
                         args.max_censored, args.overwrite)
         out_df = pd.DataFrame(out)
