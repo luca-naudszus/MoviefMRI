@@ -32,10 +32,12 @@ STRATEGIES: dict[str, dict] = {
 }
 
 # Locate files
-#TODO: locate files
+def find_runs():
+    #TODO: locate files
+    return
 
 # Denoise a single run
-def denoise():
+def denoise_run():
     #TODO: define function
     return
 
@@ -48,4 +50,19 @@ def parse_args(argv = None):
 
 def main(argv=None):
     args = parse_args(argv)
-    #TODO: add main
+    strategy = args.strategy
+    strategy_args = None #TODO: how do I get strategy arguments?
+    fmriprep_dir = args.fmriprepdir
+    out_dir = args.output_dir / args.strategy
+    out_dir.mkdir()
+    runs = find_runs(fmriprep.dir, args.space, args.participant, args.task, args.session)
+
+    for r in runs:
+        out = denoise_run(r, fmriprep_dir, out_dir, args.strategy, strategy_args,
+                        args.low_pass, args.high_pass, args.smoothing, args.standardize,
+                        args.max_censored, args.overwrite)
+        out_df = pd.DataFrame(out)
+        out_df.to_csv(out_dir / "denoising.tsv", sep="\t", index=False)
+        #TODO: Write dataset description.json
+    
+    return
