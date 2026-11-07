@@ -43,10 +43,23 @@ def denoise_run():
 
 # CLI
 def parse_args(argv = None):
+    #TODO: Add help and defaults, error message?
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    #TODO: add arguments
+    p.add_argument("fmriprep_dir", type=Path)
+    p.add_argument("output_dir", type=Path)
+    p.add_argument("--strategy", default = "simple")
+    p.add_argument("--space", default = "MNI152NLin2009cAsym")
+    p.add_argument("--participant")
+    p.add_argument("--session")
+    p.add_argument("--task")
+    p.add_argument("--low-pass")
+    p.add_argument("--high-pass")
+    p.add_argument("--smoothing")
+    p.add_argument("--standardize")
+    args = p.parse_args(argv)
+    return args
 
 def main(argv=None):
     args = parse_args(argv)
