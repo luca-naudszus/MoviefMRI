@@ -55,7 +55,7 @@ def main(argv=None):
     fmriprep_dir = args.fmriprepdir
     out_dir = args.output_dir / args.strategy
     out_dir.mkdir()
-    runs = find_runs(fmriprep.dir, args.space, args.participant, args.task, args.session)
+    runs = find_runs(fmriprep_dir, args.space, args.participant, args.task, args.session)
 
     for r in runs:
         out = denoise_run(r, fmriprep_dir, out_dir, args.strategy, strategy_args,
@@ -64,5 +64,7 @@ def main(argv=None):
         out_df = pd.DataFrame(out)
         out_df.to_csv(out_dir / "denoising.tsv", sep="\t", index=False)
         #TODO: Write dataset description.json
+
+    #TODO: Write error control
     
     return
