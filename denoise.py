@@ -12,6 +12,7 @@ and a QC table.
 Requirements: pip install nilearn
 
 """
+#TODO: Add logging
 import argparse
 import json
 import re
