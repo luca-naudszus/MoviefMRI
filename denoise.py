@@ -20,6 +20,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+import nibabel as nib
 from nilearn.image import clean_img, smooth_img
 from nilearn.interfaces.fmriprep import load_confounds
 
@@ -49,9 +51,14 @@ def find_runs(fmriprep_dir: Path, space: str, participants: list[str],
         keep.append(r)
     return keep
 
-def get_tr():
-    #TODO: Get TR
-    return
+def get_tr(bold: Path):
+    sidecar = replace_fn(bold, "_bold", "bold.json")
+    if sidecar.exists():
+        meta = json.loads(sidecar.read_text())
+        if "RepetitionTime" in meta:
+            return meta["RepetitionTime"]
+    tr = float(nib.load(str(bold)).header.get_zooms()[3])
+    return tr
 
 def get_mask(bold: Path):
     desc = re.search(r"_desc-[a-zA-Z0-9]+_bold", bold.name)
