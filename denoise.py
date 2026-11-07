@@ -53,9 +53,10 @@ def get_tr():
     #TODO: Get TR
     return
 
-def get_mask():
-    #TODO: Get mask
-    return
+def get_mask(bold: Path):
+    desc = re.search(r"_desc-[a-zA-Z0-9]+_bold", bold.name)
+    mask = replace_fn(bold, desc, "_desc-brain_mask.nii.gz")
+    return mask
 
 def replace_fn(bold: Path, old: str, new: str):
     name = bold.name
