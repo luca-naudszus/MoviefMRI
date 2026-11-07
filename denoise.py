@@ -43,16 +43,18 @@ def get_tr():
 
 def get_mask():
     #TODO: Get mask
+    return
 
 def replace_fn():
     #TODO: Build filename by replacing end of filename
+    return
 
 # Denoise a single run
 def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path,
                 kwargs: dict, smoothing: float | None, detrend: bool,
                 standardize: bool, low_pass: float, high_pass: float):
     bold_rel = bold.relative_to(fmriprep_dir)
-    desc = re.search(, bold.name) #TODO: add re search
+    desc = re.search(r"_desc-[a-zA-Z0-9]+_bold", bold.name) 
     out_file = out_dir / bold_rel.parent / bold.name.replace(desc, "_desc_denoised_bold")
     qc = dict(run=bold.name, output=str(out_file))
 
