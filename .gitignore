@@ -1,0 +1,8 @@
+*.out
+*.err
+slurm-*.out
+__pycache__/
+*.venv/
+*.h5
+*.nc
+*.npy
