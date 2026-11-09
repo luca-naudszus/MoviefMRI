@@ -15,6 +15,7 @@ Requirements: pip install nilearn
 import argparse
 import json
 import logging
+import os
 import re
 import sys
 from pathlib import Path
@@ -176,15 +177,17 @@ def tmp_write(path: Path, text: str):
     
 def write_qc(out_dir: Path, qc_df: pd.DataFrame):
     for sub, rows in qc_df.groupby("Participant"):
-        f = out_dir / f"sub--{sub}" / f"sub-{sub}_desc-denoising_qc.tsv"
+        f = out_dir / f"sub-{sub}" / f"sub-{sub}_desc-denoising_qc.tsv"
         f.parent.mkdir(parents=True, exist_ok=True)
         if f.exists():
             old = pd.read_csv(f, sep="\t", dtype={"participant": str})
             new = rows[~((rows["status"] == "skipped_exists") & rows["run"].isin(old["run"]))]
             rows = pd.concat([old[~old["run"].isin(new["run"])], new])
-        tmp_write(f, rows.convert_dtypes().to_csv(sep="\t", index=False))
-    parts = [pd.read_csv(f, sep="\t", dtype={"participant": str}) for f in out_dir.glob("sub-*/sub-*_desc_denoising_qc.tsv")]
-    tmp_write(out_dir / "denoising_qc.tsv", pd.concat(parts).convert_dtypes().to_csv(sep="\t", index=False))
+        tmp_write(f, rows.sort_values("run").convert_dtypes().to_csv(sep="\t", index=False))
+    parts = [pd.read_csv(f, sep="\t", dtype={"participant": str}) 
+             for f in sorted(out_dir.glob("sub-*/sub-*_desc_denoising_qc.tsv"))]
+    tmp_write(out_dir / "denoising_qc.tsv", 
+              pd.concat(parts).convert_dtypes().to_csv(sep="\t", index=False))
 
 # CLI
 def parse_args(argv = None):
