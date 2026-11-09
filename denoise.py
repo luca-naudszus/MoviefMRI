@@ -75,7 +75,7 @@ def replace_fn(bold: Path, old: str, new: str):
     return bold.with_name(name.replace(old, new))
 
 # Denoise a single run
-def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path,
+def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
                 kwargs: dict, smoothing: float | None, detrend: bool,
                 standardize: bool, low_pass: float, high_pass: float):
     bold_rel = bold.relative_to(fmriprep_dir)
@@ -116,7 +116,23 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path,
     confounds.to_csv(replace_fn(out_file, "_desc-denoised_bold",
                                 "_desc-denoised_regressors.tsv"), sep = "\t", index=False)
 
-    #TODO: Create dataset description.json
+    sidecar = dict(
+        Sources=[str(bold_rel)],
+        RepetitionTime=tr,
+        DenoisingStratgy=strategy,
+        LoadConfoundsParameters={k: (list(v) if isinstance(v, tuple) else v) for k, v in kwargs.items()},
+        Regressors=confounds.columns,
+        LowPass=low_pass,
+        HighPass=high_pass,
+        SmoothingFWHM=smoothing,
+        Standardize=standardize,
+        NumberOfVolumesOriginal=n_vols,
+        NumberOfVolumesRetained=n_kept,
+        RetainedVolumeIndices=(None if sample_mask is None else np.asarray(sample_mask).tolist()),
+    )
+    replace_fn(out_file, "_bold", "_bold.json").write_text(
+        json.dumps(sidecar, indent=2)
+    )
 
     return qc
 
