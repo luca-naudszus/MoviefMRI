@@ -83,57 +83,59 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
     out_file = out_dir / bold_rel.parent / bold.name.replace(desc, "_desc_denoised_bold")
     qc = dict(run=bold.name, output=str(out_file))
 
-    tr = get_tr(bold)
-    mask = get_mask(bold)
+    try:
+        tr = get_tr(bold)
+        mask = get_mask(bold)
 
-    confounds, sample_mask = load_confounds(str(bold), kwargs)
+        confounds, sample_mask = load_confounds(str(bold), kwargs)
 
-    n_vols = len(confounds)
-    n_kept = n_vols if sample_mask is None else len(sample_mask)
-    conf_tsv = replace_fn(bold, desc, "_desc-confounds_timeseries.tsv")
+        n_vols = len(confounds)
+        n_kept = n_vols if sample_mask is None else len(sample_mask)
+        conf_tsv = replace_fn(bold, desc, "_desc-confounds_timeseries.tsv")
 
-    fd = pd.read_csv(conf_tsv, sep="\t")["framewise_discplacement"]
-    qc.update(tr=tr, n_volumes=n_vols, n_kept=n_kept,
-              n_regressors=confounds.shape[1],
-              mean_fd=round(float(fd.mean()), 3))
+        fd = pd.read_csv(conf_tsv, sep="\t")["framewise_discplacement"]
+        qc.update(tr=tr, n_volumes=n_vols, n_kept=n_kept,
+                n_regressors=confounds.shape[1],
+                mean_fd=round(float(fd.mean()), 3))
 
-    img = bold
-    if smoothing:
-        img = smooth_img(bold, fwhm=smoothing)
+        img = bold
+        if smoothing:
+            img = smooth_img(bold, fwhm=smoothing)
 
-    cleaned = clean_img(img, confounds=confounds, detrend=detrend,
-                        standardize=standardize, low_pass=low_pass, high_pass=high_pass,
-                        t_r = tr, mask_img = mask, clean__sample_mask = sample_mask,
-    )
+        cleaned = clean_img(img, confounds=confounds, detrend=detrend,
+                            standardize=standardize, low_pass=low_pass, high_pass=high_pass,
+                            t_r = tr, mask_img = mask, clean__sample_mask = sample_mask,
+        )
 
-    out_file.parent.mkdir()
-    # reset header because nilearn resets the 4th zoom
-    cleaned.header.set_zooms(cleaned.header.get_zooms()[:3] + (tr,))
-    cleaned.header.set_xyzt_units("mm", "sec")
-    cleaned.to_filename(out_file)
+        out_file.parent.mkdir()
+        # reset header because nilearn resets the 4th zoom
+        cleaned.header.set_zooms(cleaned.header.get_zooms()[:3] + (tr,))
+        cleaned.header.set_xyzt_units("mm", "sec")
+        cleaned.to_filename(out_file)
 
 
-    confounds.to_csv(replace_fn(out_file, "_desc-denoised_bold",
-                                "_desc-denoised_regressors.tsv"), sep = "\t", index=False)
+        confounds.to_csv(replace_fn(out_file, "_desc-denoised_bold",
+                                    "_desc-denoised_regressors.tsv"), sep = "\t", index=False)
 
-    sidecar = dict(
-        Sources=[str(bold_rel)],
-        RepetitionTime=tr,
-        DenoisingStratgy=strategy,
-        LoadConfoundsParameters={k: (list(v) if isinstance(v, tuple) else v) for k, v in kwargs.items()},
-        Regressors=confounds.columns,
-        LowPass=low_pass,
-        HighPass=high_pass,
-        SmoothingFWHM=smoothing,
-        Standardize=standardize,
-        NumberOfVolumesOriginal=n_vols,
-        NumberOfVolumesRetained=n_kept,
-        RetainedVolumeIndices=(None if sample_mask is None else np.asarray(sample_mask).tolist()),
-    )
-    replace_fn(out_file, "_bold", "_bold.json").write_text(
-        json.dumps(sidecar, indent=2)
-    )
-
+        sidecar = dict(
+            Sources=[str(bold_rel)],
+            RepetitionTime=tr,
+            DenoisingStratgy=strategy,
+            LoadConfoundsParameters={k: (list(v) if isinstance(v, tuple) else v) for k, v in kwargs.items()},
+            Regressors=list(confounds.columns),
+            LowPass=low_pass,
+            HighPass=high_pass,
+            SmoothingFWHM=smoothing,
+            Standardize=standardize,
+            NumberOfVolumesOriginal=n_vols,
+            NumberOfVolumesRetained=n_kept,
+            RetainedVolumeIndices=(None if sample_mask is None else np.asarray(sample_mask).tolist()),
+        )
+        replace_fn(out_file, "_bold", "_bold.json").write_text(
+            json.dumps(sidecar, indent=2)
+        )
+    except Exception as e:
+        qc.update(status="error", error=str(e))
     return qc
 
 # CLI
