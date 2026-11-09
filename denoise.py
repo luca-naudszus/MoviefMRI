@@ -21,6 +21,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
 
 import nibabel as nib
 from nilearn.image import clean_img, smooth_img
@@ -170,6 +171,9 @@ def parse_args(argv = None):
     p.add_argument("--high-pass")
     p.add_argument("--smoothing")
     p.add_argument("--standardize")
+    p.add_argument("--max_censored")
+    p.add_argument("--n-jobs")
+    p.add_argument("--overwrite")
     args = p.parse_args(argv)
     return args
 
@@ -180,19 +184,18 @@ def main(argv=None):
     out_dir = args.output_dir.resolve() / args.strategy
     out_dir.mkdir(parents=True, exist_ok=True)
 
-
-
     runs = find_runs(fmriprep_dir, args.space, args.participant, args.task, args.session)
     if not runs:
         return 1
 
-    for r in runs:
-        qc = denoise_run(r, fmriprep_dir, out_dir, args.strategy, lc_kwargs,
-                        args.low_pass, args.high_pass, args.smoothing, args.standardize,
-                        args.max_censored, args.overwrite)
-        qc_df = pd.DataFrame(qc)
-        qc_df.to_csv(out_dir / "denoising_qc.tsv", sep="\t", index=False)
-        (out_dir / "dataset_description.json").write_text(json.dumps(dict(
+    qc = Parallel(n_jobs=args.n_jobs)(
+    delayed(denoise_run(r, fmriprep_dir, out_dir, args.strategy, lc_kwargs,
+                    args.low_pass, args.high_pass, args.smoothing, args.standardize,
+                    args.max_censored, args.overwrite))
+                    for r in runs)
+    qc_df = pd.DataFrame(qc)
+    qc_df.to_csv(out_dir / "denoising_qc.tsv", sep="\t", index=False)
+    (out_dir / "dataset_description.json").write_text(json.dumps(dict(
             Name = f"fMRIPrep denoised",
             BIDSVersion="1.9.0",
             DatasetType="derivative",
