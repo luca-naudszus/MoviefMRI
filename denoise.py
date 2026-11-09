@@ -156,25 +156,27 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
 
 # CLI
 def parse_args(argv = None):
-    #TODO: Add help and defaults, error message?
+    #TODO: Add help? 
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("fmriprep_dir", type=Path)
-    p.add_argument("output_dir", type=Path)
-    p.add_argument("--strategy", default = "simple")
+    p.add_argument("fmriprep_dir", type=Path, nargs="?")
+    p.add_argument("output_dir", type=Path, nargs="?")
+    p.add_argument("--strategy", default = "simple", choices=sorted(STRATEGIES))
     p.add_argument("--space", default = "MNI152NLin2009cAsym")
-    p.add_argument("--participant")
-    p.add_argument("--session")
-    p.add_argument("--task")
-    p.add_argument("--low-pass")
-    p.add_argument("--high-pass")
-    p.add_argument("--smoothing")
-    p.add_argument("--standardize")
-    p.add_argument("--max_censored")
-    p.add_argument("--n-jobs")
-    p.add_argument("--overwrite")
+    p.add_argument("--participant", nargs="+")
+    p.add_argument("--session", nargs="+")
+    p.add_argument("--task", nargs="+")
+    p.add_argument("--low-pass", type=float, default=None)
+    p.add_argument("--high-pass", type=float, default=None)
+    p.add_argument("--smoothing", type=float, default=None)
+    p.add_argument("--standardize", choices=["zscore_sample", "psc"], default=None)
+    p.add_argument("--max_censored", type=float, default=0.5)
+    p.add_argument("--n-jobs", type=int, default=1)
+    p.add_argument("--overwrite", action="store_true")
     args = p.parse_args(argv)
+    if args.fmriprep_dir is None or args.output_dir is None:
+        p.error("fmriprep_dir and output_dir are required")
     return args
 
 def main(argv=None):
