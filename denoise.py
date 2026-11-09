@@ -81,14 +81,16 @@ def replace_fn(bold: Path, old: str, new: str):
 
 # Denoise a single run
 def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
-                lc_kwargs: dict, smoothing: float | None, detrend: bool,
+                lc_kwargs: dict, smoothing: float | None, 
                 standardize: bool, low_pass: float, high_pass: float,
                 max_censored: float, overwrite: bool)-> dict:
+    
     bold_rel = bold.relative_to(fmriprep_dir) 
     desc = re.search(r"_desc-[a-zA-Z0-9]+_bold", bold.name).group(0)
     out_file = out_dir / bold_rel.parent / bold.name.replace(desc, "_desc_denoised_bold")
     out_file = out_file.with_name(out_file.name.replace(".nii.gz", "").replace(".nii", "") + ".nii.gz")
-    qc = dict(run=bold.name, output=str(out_file), status="ok")
+    qc = dict(participant=entities(bold)["sub"],
+              run=bold.name, output=str(out_file), status="ok")
 
     if out_file.exists() and not overwrite:
         log.info("skip (exists): %s", out_file.name)
@@ -111,9 +113,9 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
         fd = pd.read_csv(conf_tsv, sep="\t")["framewise_discplacement"]
         qc.update(tr=tr, n_volumes=n_vols, n_kept=n_kept,
                   pct_censored=round(100*frac_censored, 1),
-                n_regressors=confounds.shape[1],
-                dof_left=n_kept - confounds.shape[1],
-                mean_fd=round(float(fd.mean()), 3))
+                    n_regressors=confounds.shape[1],
+                    dof_left=n_kept - confounds.shape[1],
+                    mean_fd=round(float(fd.mean()), 3))
 
         if frac_censored > max_censored:
             log.warning("%s: %.0f%% of volumes censored (> %.0f%%), skipped", 
@@ -125,7 +127,7 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
 
         img = bold
         if smoothing:
-            img = smooth_img(bold, fwhm=smoothing)
+            img = smooth_img(str(bold), fwhm=smoothing)
 
         cleaned = clean_img(img, confounds=confounds, detrend=False,
                             standardize=standardize, low_pass=low_pass, high_pass=high_pass,
@@ -165,6 +167,24 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
         log.error("%s failed: %s", bold.name, e)
         qc.update(status="error", error=str(e))
     return qc
+
+# QC tables
+def tmp_write(path: Path, text: str):
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+    
+def write_qc(out_dir: Path, qc_df: pd.DataFrame):
+    for sub, rows in qc_df.groupby("Participant"):
+        f = out_dir / f"sub--{sub}" / f"sub-{sub}_desc-denoising_qc.tsv"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        if f.exists():
+            old = pd.read_csv(f, sep="\t", dtype={"participant": str})
+            new = rows[~((rows["status"] == "skipped_exists") & rows["run"].isin(old["run"]))]
+            rows = pd.concat([old[~old["run"].isin(new["run"])], new])
+        tmp_write(f, rows.convert_dtypes().to_csv(sep="\t", index=False))
+    parts = [pd.read_csv(f, sep="\t", dtype={"participant": str}) for f in out_dir.glob("sub-*/sub-*_desc_denoising_qc.tsv")]
+    tmp_write(out_dir / "denoising_qc.tsv", pd.concat(parts).convert_dtypes().to_csv(sep="\t", index=False))
 
 # CLI
 def parse_args(argv = None):
@@ -213,8 +233,8 @@ def main(argv=None):
                     args.max_censored, args.overwrite))
                     for r in runs)
     qc_df = pd.DataFrame(qc)
-    qc_df.to_csv(out_dir / "denoising_qc.tsv", sep="\t", index=False)
-    (out_dir / "dataset_description.json").write_text(json.dumps(dict(
+    write_qc(out_dir, qc_df)
+    tmp_write(out_dir / "dataset_description.json", json.dumps(dict(
             Name = f"fMRIPrep denoised",
             BIDSVersion="1.9.0",
             DatasetType="derivative",
