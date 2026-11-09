@@ -107,8 +107,11 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path,
     )
 
     out_file.parent.mkdir()
+    # reset header because nilearn resets the 4th zoom
+    cleaned.header.set_zooms(cleaned.header.get_zooms()[:3] + (tr,))
+    cleaned.header.set_xyzt_units("mm", "sec")
     cleaned.to_filename(out_file)
-    #TODO: reset header?
+
 
     confounds.to_csv(replace_fn(out_file, "_desc-denoised_bold",
                                 "_desc-denoised_regressors.tsv"), sep = "\t", index=False)
