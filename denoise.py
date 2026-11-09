@@ -12,9 +12,9 @@ and a QC table.
 Requirements: pip install nilearn
 
 """
-#TODO: Add logging
 import argparse
 import json
+import logging
 import re
 import sys
 from pathlib import Path
@@ -35,6 +35,9 @@ STRATEGIES: dict[str, dict] = {
     )
     #TODO: potentially add different strategies
 }
+
+# Logger
+log = logging.getLogger("denoise")
 
 # Locate files
 def find_runs(fmriprep_dir: Path, space: str, participants: list[str],
@@ -87,12 +90,15 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
     qc = dict(run=bold.name, output=str(out_file), status="ok")
 
     if out_file.exists() and not overwrite:
+        log.info("skip (exists): %s", out_file.name)
         qc["status"] = "skipped_exists"
         return qc
 
     try:
         tr = get_tr(bold)
         mask = get_mask(bold)
+        if mask is None:
+            log.warning("%s: no brain mask found, cleaning all voxels", bold.name)
 
         confounds, sample_mask = load_confounds(str(bold), lc_kwargs)
 
@@ -109,6 +115,8 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
                 mean_fd=round(float(fd.mean()), 3))
 
         if frac_censored > max_censored:
+            log.warning("%s: %.0f%% of volumes censored (> %.0f%%), skipped", 
+                        bold.name, 100 * frac_censored, 100 * max_censored)
             qc["status"] = "excluded_motion"
             return qc
         if qc["dof_left"] < 1:
@@ -118,7 +126,7 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
         if smoothing:
             img = smooth_img(bold, fwhm=smoothing)
 
-        cleaned = clean_img(img, confounds=confounds, detrend=detrend,
+        cleaned = clean_img(img, confounds=confounds, detrend=False,
                             standardize=standardize, low_pass=low_pass, high_pass=high_pass,
                             t_r = tr, mask_img = mask, clean__sample_mask = sample_mask,
         )
@@ -150,7 +158,10 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
         replace_fn(out_file, "_bold", "_bold.json").write_text(
             json.dumps(sidecar, indent=2)
         )
+        log.info("done: %s (%d regressors, %d/%d volumes kept)",
+                 out_file.name, confounds.shape[1], n_kept, n_vols)
     except Exception as e:
+        log.error("%s failed: %s", bold.name, e)
         qc.update(status="error", error=str(e))
     return qc
 
@@ -181,6 +192,8 @@ def parse_args(argv = None):
 
 def main(argv=None):
     args = parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
+
     lc_kwargs = dict(STRATEGIES[args.strategy])
     fmriprep_dir = args.fmriprepdir.resolve()
     out_dir = args.output_dir.resolve() / args.strategy
@@ -188,7 +201,10 @@ def main(argv=None):
 
     runs = find_runs(fmriprep_dir, args.space, args.participant, args.task, args.session)
     if not runs:
+        log.error("No matching runs in %s (space=%s).", fmriprep_dir, args.space)
         return 1
+
+    log.info("Strategy %s: %d run(s) to process", args.strategy, len(runs))
 
     qc = Parallel(n_jobs=args.n_jobs)(
     delayed(denoise_run(r, fmriprep_dir, out_dir, args.strategy, lc_kwargs,
@@ -205,4 +221,8 @@ def main(argv=None):
         ), indent=2))
 
     counts = qc_df["status"].value_counts().to_dict()
+    log.info("Finished: %s QC table: %s", counts, out_dir / "denoising_qc.tsv")
     return 0 if "error" not in counts else 2
+
+if __name__ == "__main__":
+    sys.exit(main())
