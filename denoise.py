@@ -175,20 +175,29 @@ def parse_args(argv = None):
 
 def main(argv=None):
     args = parse_args(argv)
-    kwargs = dict(STRATEGIES[args.strategy])
-    fmriprep_dir = args.fmriprepdir
-    out_dir = args.output_dir / args.strategy
-    out_dir.mkdir()
+    lc_kwargs = dict(STRATEGIES[args.strategy])
+    fmriprep_dir = args.fmriprepdir.resolve()
+    out_dir = args.output_dir.resolve() / args.strategy
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+
+
     runs = find_runs(fmriprep_dir, args.space, args.participant, args.task, args.session)
+    if not runs:
+        return 1
 
     for r in runs:
-        out = denoise_run(r, fmriprep_dir, out_dir, args.strategy, kwargs,
+        qc = denoise_run(r, fmriprep_dir, out_dir, args.strategy, lc_kwargs,
                         args.low_pass, args.high_pass, args.smoothing, args.standardize,
                         args.max_censored, args.overwrite)
-        out_df = pd.DataFrame(out)
-        out_df.to_csv(out_dir / "denoising.tsv", sep="\t", index=False)
-        #TODO: Write dataset description.json
+        qc_df = pd.DataFrame(qc)
+        qc_df.to_csv(out_dir / "denoising_qc.tsv", sep="\t", index=False)
+        (out_dir / "dataset_description.json").write_text(json.dumps(dict(
+            Name = f"fMRIPrep denoised",
+            BIDSVersion="1.9.0",
+            DatasetType="derivative",
+            GeneratedBy=[dict(Name="denoise.py (nilearn)")],
+        ), indent=2))
 
-    #TODO: Write error control
-    
-    return
+    counts = qc_df["status"].value_counts().to_dict()
+    return 0 if "error" not in counts else 2
