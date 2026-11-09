@@ -57,14 +57,14 @@ def get_tr(bold: Path):
     if sidecar.exists():
         meta = json.loads(sidecar.read_text())
         if "RepetitionTime" in meta:
-            return meta["RepetitionTime"]
+            return float(meta["RepetitionTime"])
     tr = float(nib.load(str(bold)).header.get_zooms()[3])
     return tr
 
 def get_mask(bold: Path):
     desc = re.search(r"_desc-[a-zA-Z0-9]+_bold", bold.name)
     mask = replace_fn(bold, desc, "_desc-brain_mask.nii.gz")
-    return mask
+    return mask if mask.exists() else None
 
 def replace_fn(bold: Path, old: str, new: str):
     name = bold.name
@@ -76,27 +76,41 @@ def replace_fn(bold: Path, old: str, new: str):
 
 # Denoise a single run
 def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
-                kwargs: dict, smoothing: float | None, detrend: bool,
-                standardize: bool, low_pass: float, high_pass: float):
-    bold_rel = bold.relative_to(fmriprep_dir)
-    desc = re.search(r"_desc-[a-zA-Z0-9]+_bold", bold.name) 
+                lc_kwargs: dict, smoothing: float | None, detrend: bool,
+                standardize: bool, low_pass: float, high_pass: float)-> dict:
+    bold_rel = bold.relative_to(fmriprep_dir) 
+    desc = re.search(r"_desc-[a-zA-Z0-9]+_bold", bold.name).group(0)
     out_file = out_dir / bold_rel.parent / bold.name.replace(desc, "_desc_denoised_bold")
-    qc = dict(run=bold.name, output=str(out_file))
+    out_file = out_file.with_name(out_file.name.replace(".nii.gz", "").replace(".nii", "") + ".nii.gz")
+    qc = dict(run=bold.name, output=str(out_file), status="ok")
+
+    if out_file.exists():
+        qc["status"] = "exists"
+        return qc
 
     try:
         tr = get_tr(bold)
         mask = get_mask(bold)
 
-        confounds, sample_mask = load_confounds(str(bold), kwargs)
+        confounds, sample_mask = load_confounds(str(bold), lc_kwargs)
 
         n_vols = len(confounds)
         n_kept = n_vols if sample_mask is None else len(sample_mask)
+        frac_censored = 1 - n_kept / n_vols
         conf_tsv = replace_fn(bold, desc, "_desc-confounds_timeseries.tsv")
 
         fd = pd.read_csv(conf_tsv, sep="\t")["framewise_discplacement"]
         qc.update(tr=tr, n_volumes=n_vols, n_kept=n_kept,
+                  pct_censored=round(100*frac_censored, 1),
                 n_regressors=confounds.shape[1],
+                dof_left=n_kept - confounds.shape[1],
                 mean_fd=round(float(fd.mean()), 3))
+
+        if frac_censored > max_censored:
+            qc["status"] = "excluded_motion"
+            return qc
+        if qc["dof_left"] < 1:
+            raise ValueError(f"more regressors ({confounds.shape[1]}) than retained volumes ({n_kept})")
 
         img = bold
         if smoothing:
@@ -107,7 +121,7 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
                             t_r = tr, mask_img = mask, clean__sample_mask = sample_mask,
         )
 
-        out_file.parent.mkdir()
+        out_file.parent.mkdir(parents=True, exist_ok=True)
         # reset header because nilearn resets the 4th zoom
         cleaned.header.set_zooms(cleaned.header.get_zooms()[:3] + (tr,))
         cleaned.header.set_xyzt_units("mm", "sec")
@@ -121,7 +135,7 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
             Sources=[str(bold_rel)],
             RepetitionTime=tr,
             DenoisingStratgy=strategy,
-            LoadConfoundsParameters={k: (list(v) if isinstance(v, tuple) else v) for k, v in kwargs.items()},
+            LoadConfoundsParameters={k: (list(v) if isinstance(v, tuple) else v) for k, v in lc_kwargs.items()},
             Regressors=list(confounds.columns),
             LowPass=low_pass,
             HighPass=high_pass,
