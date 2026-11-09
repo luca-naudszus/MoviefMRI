@@ -33,6 +33,11 @@ STRATEGIES: dict[str, dict] = {
     "simple": dict(
         strategy=("motion", "wm_csf", "high_pass"),
         motion = "full", wm_csf="basic",
+    ),
+    "scrubbing": dict(
+        strategy=("motion", "wm_csf", "global_signal", "scrub", "high_pass" ),
+        motion="full", wm_csf="full", global_signal="full",
+        scrub=5, fd_threshold=0.5, std_dvars_threshold=1.5, #TODO: Option to override defaults
     )
     #TODO: potentially add different strategies
 }
