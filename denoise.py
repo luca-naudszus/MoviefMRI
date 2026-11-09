@@ -63,6 +63,7 @@ def get_tr(bold: Path):
         if "RepetitionTime" in meta:
             return float(meta["RepetitionTime"])
     tr = float(nib.load(str(bold)).header.get_zooms()[3])
+    log.warning("%s: no repetition time in sidecar, using header TR=%.3f s", bold.name, tr)
     return tr
 
 def get_mask(bold: Path):
