@@ -77,15 +77,16 @@ def replace_fn(bold: Path, old: str, new: str):
 # Denoise a single run
 def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
                 lc_kwargs: dict, smoothing: float | None, detrend: bool,
-                standardize: bool, low_pass: float, high_pass: float)-> dict:
+                standardize: bool, low_pass: float, high_pass: float,
+                max_censored: float, overwrite: bool)-> dict:
     bold_rel = bold.relative_to(fmriprep_dir) 
     desc = re.search(r"_desc-[a-zA-Z0-9]+_bold", bold.name).group(0)
     out_file = out_dir / bold_rel.parent / bold.name.replace(desc, "_desc_denoised_bold")
     out_file = out_file.with_name(out_file.name.replace(".nii.gz", "").replace(".nii", "") + ".nii.gz")
     qc = dict(run=bold.name, output=str(out_file), status="ok")
 
-    if out_file.exists():
-        qc["status"] = "exists"
+    if out_file.exists() and not overwrite:
+        qc["status"] = "skipped_exists"
         return qc
 
     try:
