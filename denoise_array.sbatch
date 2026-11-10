@@ -30,5 +30,6 @@ python "$SCRIPT" "$FMRIPREP_DIR" "$OUT_DIR" \
     --participant "$SUB" \
     --task rest \
     --strategy scrubbing \
+    --global-signal-full \
     --low-pass 0.1 \
     --n-jobs "${SLURM_CPUS_PER_TASK}"
