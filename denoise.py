@@ -3,13 +3,16 @@
 Denoise fMRIPrep-preprocessed BOLD data with confound regression (nilearn). 
 
 For each preprocessed run, the script
-(1) loads the matching confounds timeseries using a named denoising strategy.
+(1) loads one of nilearn's strategies, optionally adjusted
 (2) reads the TR from the JSON sidecar
 (3) regresses the confounds out within fMRIPrep's brain mask
 (4) writes a BIDS-derivative-style output plus a JSON sidecar describing exactly what was done,
 and a QC table.
 
 Requirements: pip install nilearn
+
+Preset definitions and which options each one accepts:
+https://nilearn.github.io/stable/modules/generated/nilearn.interfaces.fmriprep.load_confounds_strategy.html
 
 """
 import argparse
@@ -26,33 +29,33 @@ from joblib import Parallel, delayed
 
 import nibabel as nib
 from nilearn.image import clean_img, smooth_img
-from nilearn.interfaces.fmriprep import load_confounds
+import nilearn
+from nilearn.interfaces.fmriprep import load_confounds_strategy
 
-# Denoising strategies
-STRATEGIES: dict[str, dict] = {
-    "simple": dict(
-        strategy=("motion", "wm_csf", "high_pass"),
-        motion = "full", wm_csf="basic",
-    ),
-    "scrubbing": dict(
-        strategy=("motion", "wm_csf", "global_signal", "scrub", "high_pass" ),
-        motion="full", wm_csf="full", global_signal="full",
-        scrub=5, fd_threshold=0.5, std_dvars_threshold=1.5, #TODO: Option to override defaults
-    )
-    #TODO: potentially add different strategies
+# Presets and overrides
+PRESETS = {"simple", "scrubbing", "compcor", "ica_aroma"}
+OVERRIDES = {
+    "motion": "motion",
+    "wm_csf": "wm_csf",
+    "global_signal": "global_signal",
+    "fd_threshold": "fd_threshold",
+    "dvars_threshold": "dvars_threshold",
 }
 
 # Logger
 log = logging.getLogger("denoise")
 
 # Locate files
+def entities(path: Path): 
+    return dict(re.findall(r"([a-ZA-Z]+)-([a-zA-Z0-9]+)", path.name.split(".")[0]))
+
 def find_runs(fmriprep_dir: Path, space: str, participants: list[str],
               tasks: list[str], sessions: list[str]):
     pattern = f"*_space-{space}_desc-preproc_bold.nii*"
     runs = sorted(fmriprep_dir.glob(f"sub-*/**/func/{pattern}"))
     keep = []
     for r in runs:
-        files = dict.re.findall(r"([a-ZA-Z]+)-([a-zA-Z0-9]+)", r.name.split(".")[0])
+        files = entities(r)
         if participants and r.get("sub") not in participants:
             continue
         if tasks and r.get("task") not in tasks:
@@ -87,7 +90,7 @@ def replace_fn(bold: Path, old: str, new: str):
 
 # Denoise a single run
 def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
-                lc_kwargs: dict, smoothing: float | None, 
+                overrides: dict, smoothing: float | None, 
                 standardize: bool, low_pass: float, high_pass: float,
                 max_censored: float, overwrite: bool)-> dict:
     
@@ -109,7 +112,7 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
         if mask is None:
             log.warning("%s: no brain mask found, cleaning all voxels", bold.name)
 
-        confounds, sample_mask = load_confounds(str(bold), lc_kwargs)
+        confounds, sample_mask = load_confounds_strategy(str(bold), denoise_strategy=strategy, **overrides)
 
         n_vols = len(confounds)
         n_kept = n_vols if sample_mask is None else len(sample_mask)
@@ -154,8 +157,8 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
             Sources=[str(bold_rel)],
             RepetitionTime=tr,
             DenoisingStratgy=strategy,
-            LoadConfoundsParameters={k: (list(v) if isinstance(v, tuple) else v) for k, v in lc_kwargs.items()},
-            Regressors=list(confounds.columns),
+            StrategyOverrides=overrides,
+            NilearnVersion=nilearn.__version__,
             LowPass=low_pass,
             HighPass=high_pass,
             SmoothingFWHM=smoothing,
@@ -200,9 +203,12 @@ def parse_args(argv = None):
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("fmriprep_dir", type=Path, nargs="?")
-    p.add_argument("output_dir", type=Path, nargs="?")
-    p.add_argument("--strategy", default = "simple", choices=sorted(STRATEGIES))
+    p.add_argument("fmriprep_dir", type=Path)
+    p.add_argument("output_dir", type=Path)
+    p.add_argument("--strategy", default = "simple", choices=PRESETS)
+    p.add_argument("--global-signal", choices=["basic", "power2", "derivatives", "full"])
+    p.add_argument("--wm-csf", choices=["basic", "power2", "derivatives", "full"])
+    p.add_argument("--motion", choices=["basic", "power2", "derivatives", "full"])
     p.add_argument("--space", default = "MNI152NLin2009cAsym")
     p.add_argument("--participant", nargs="+")
     p.add_argument("--session", nargs="+")
@@ -214,18 +220,17 @@ def parse_args(argv = None):
     p.add_argument("--max_censored", type=float, default=0.5)
     p.add_argument("--n-jobs", type=int, default=1)
     p.add_argument("--overwrite", action="store_true")
-    args = p.parse_args(argv)
-    if args.fmriprep_dir is None or args.output_dir is None:
-        p.error("fmriprep_dir and output_dir are required")
-    return args
+    return p.parse_args(argv)
 
 def main(argv=None):
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
 
-    lc_kwargs = dict(STRATEGIES[args.strategy])
+    overrides = {kw: getattr(args, opt) for opt, kw in OVERRIDES.items() if getattr(args, opt) is not None}
+    label = "_".join([args.strategy] + [f"{k}--{v}" for k, v in sorted(overrides.items())])
+
     fmriprep_dir = args.fmriprepdir.resolve()
-    out_dir = args.output_dir.resolve() / args.strategy
+    out_dir = args.output_dir.resolve() / label
     out_dir.mkdir(parents=True, exist_ok=True)
 
     runs = find_runs(fmriprep_dir, args.space, args.participant, args.task, args.session)
@@ -233,10 +238,10 @@ def main(argv=None):
         log.error("No matching runs in %s (space=%s).", fmriprep_dir, args.space)
         return 1
 
-    log.info("Strategy %s: %d run(s) to process", args.strategy, len(runs))
+    log.info("Strategy '%s' %s: %d run(s) to process", args.strategy, overrides or "(preset defaults)", len(runs))
 
     qc = Parallel(n_jobs=args.n_jobs)(
-    delayed(denoise_run(r, fmriprep_dir, out_dir, args.strategy, lc_kwargs,
+    delayed(denoise_run(r, fmriprep_dir, out_dir, args.strategy, overrides,
                     args.low_pass, args.high_pass, args.smoothing, args.standardize,
                     args.max_censored, args.overwrite))
                     for r in runs)
