@@ -11,7 +11,7 @@ and a QC table.
 
 Requirements: pip install nilearn
 
-Preset definitions and which options each one accepts:
+Preset nilearn definitions and which options each one accepts:
 https://nilearn.github.io/stable/modules/generated/nilearn.interfaces.fmriprep.load_confounds_strategy.html
 
 """
@@ -33,7 +33,12 @@ import nilearn
 from nilearn.interfaces.fmriprep import load_confounds_strategy
 
 # Presets and overrides
-PRESETS = {"simple", "scrubbing", "compcor", "ica_aroma"}
+# simple:       24 motion parameters, WM/CSF means, cosine drift regressors
+# scrubbing:    as simple with 8 WM/CSF parameters, 
+#               plus censoring of volumes with FD > 0.55 mm or std DVARS > 1.5 (and segments < 5 volumes)
+# compcor:      24 motion parameters, anatomical CompCor, cosines
+# ica_aroma:    #TODO: uses slightly different outputs, currently not implemented
+PRESETS = {"simple", "scrubbing", "compcor"} #, "ica_aroma"}
 OVERRIDES = {
     "motion": "motion",
     "wm_csf": "wm_csf",
@@ -231,7 +236,7 @@ def main(argv=None):
 
     fmriprep_dir = args.fmriprepdir.resolve()
     out_dir = args.output_dir.resolve() / label
-    out_dir.mkdir(parents=True, exist_ok=True)
+
 
     runs = find_runs(fmriprep_dir, args.space, args.participant, args.task, args.session)
     if not runs:
@@ -246,6 +251,8 @@ def main(argv=None):
                     args.max_censored, args.overwrite))
                     for r in runs)
     qc_df = pd.DataFrame(qc)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     write_qc(out_dir, qc_df)
     tmp_write(out_dir / "dataset_description.json", json.dumps(dict(
             Name = f"fMRIPrep denoised",
