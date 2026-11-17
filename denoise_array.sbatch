@@ -29,7 +29,8 @@ echo "Array task ${SLURM_ARRAY_TASK_ID}: sub-${SUB}"
 python "$SCRIPT" "$FMRIPREP_DIR" "$OUT_DIR" \
     --participant "$SUB" \
     --task rest \
-    --strategy scrubbing \
-    --global-signal-full \
+    --strategy simple \
+    --wm-csf full \
     --low-pass 0.1 \
+    --high-pass 0.008 \
     --n-jobs "${SLURM_CPUS_PER_TASK}"
