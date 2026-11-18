@@ -18,6 +18,12 @@ CONTAINERS=/cluster/work/gess/sbs/neurodesk/neurocommand/local/containers
 export FMRIPREP_IMAGE=$CONTAINERS/fmriprep_${FMRIPREP_VERSION}_${FMRIPREP_BUILD}/fmriprep_${FMRIPREP_VERSION}_${FMRIPREP_BUILD}.simg
 export MRIQC_IMAGE=$CONTAINERS/mriqc_${MRIQC_VERSION}_${MRIQC_BUILD}/mriqc_${MRIQC_VERSION}_${MRIQC_BUILD}.simg
 
+# --- Python environment for denoise.py ----------------------------------------
+# The package versions are pinned in code/requirements.txt.
+STACK_MODULE=stack/2025-06          
+PYTHON_MODULE=python/3.13.0
+export DENOISE_VENV=/cluster/work/gess/sbs/MoviefMRI/venv
+
 # --- Shared resources ---------------------------------------------------------
 export FS_LICENSE=$HOME/FSLicense/license.txt
 export TEMPLATEFLOW_HOME=/cluster/work/gess/sbs/MoviefMRI/templateflow
