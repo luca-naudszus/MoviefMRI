@@ -2,7 +2,7 @@
 # One SLURM array task per participant. 
 #
 # Before submitting:
-#   1. make the participant list (one label per line, without "sub-"):
+#   1. make the participant list:
 #        ls -d /data/derivatives/fmriprep/sub-*/ | xargs -n1 basename \
 #            | sed 's/^sub-//' > participants.txt
 #   2. create the log folder:  mkdir -p logs
@@ -29,8 +29,7 @@ echo "Array task ${SLURM_ARRAY_TASK_ID}: sub-${SUB}"
 python "$SCRIPT" "$FMRIPREP_DIR" "$OUT_DIR" \
     --participant "$SUB" \
     --task rest \
-    --strategy simple \
-    --wm-csf full \
+    --strategy compcor
     --low-pass 0.1 \
     --high-pass 0.008 \
     --n-jobs "${SLURM_CPUS_PER_TASK}"
