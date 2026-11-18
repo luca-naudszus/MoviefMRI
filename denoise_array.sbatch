@@ -11,7 +11,7 @@
 #
 #SBATCH --job-name=denoise
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=16G
+#SBATCH --mem-per-cpu=16G
 #SBATCH --time=01:00:00
 #SBATCH --output=logs/denoise_%A_%a.out
 
@@ -29,7 +29,7 @@ echo "Array task ${SLURM_ARRAY_TASK_ID}: sub-${SUB}"
 python "$SCRIPT" "$FMRIPREP_DIR" "$OUT_DIR" \
     --participant "$SUB" \
     --task rest \
-    --strategy compcor
+    --strategy compcor \
     --low-pass 0.1 \
     --high-pass 0.008 \
     --n-jobs "${SLURM_CPUS_PER_TASK}"
