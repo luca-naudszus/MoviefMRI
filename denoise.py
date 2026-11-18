@@ -35,7 +35,7 @@ from nilearn.interfaces.fmriprep import load_confounds_strategy
 # Presets and overrides
 # simple:       24 motion parameters, WM/CSF means, cosine drift regressors
 # scrubbing:    as simple with 8 WM/CSF parameters, 
-#               plus censoring of volumes with FD > 0.55 mm or std DVARS > 1.5 (and segments < 5 volumes)
+#               plus censoring of volumes with FD > 0.2 mm or std DVARS > 3 (and segments < 5 volumes)
 # compcor:      24 motion parameters, anatomical CompCor, cosines
 # ica_aroma:    #TODO: uses slightly different outputs, currently not implemented
 PRESETS = {"simple", "scrubbing", "compcor"} #, "ica_aroma"}
@@ -44,7 +44,7 @@ OVERRIDES = {
     "wm_csf": "wm_csf",
     "global_signal": "global_signal",
     "fd_threshold": "fd_threshold",
-    "dvars_threshold": "dvars_threshold",
+    "std_dvars_threshold": "std_dvars_threshold",
 }
 
 # Logger
@@ -52,26 +52,30 @@ log = logging.getLogger("denoise")
 
 # Locate files
 def entities(path: Path): 
-    return dict(re.findall(r"([a-ZA-Z]+)-([a-zA-Z0-9]+)", path.name.split(".")[0]))
+    return dict(re.findall(r"([a-zA-Z]+)-([a-zA-Z0-9]+)", path.name.split(".")[0]))
 
-def find_runs(fmriprep_dir: Path, space: str, participants: list[str],
+def find_runs(fmriprep_dir: Path, space: str, res: str, participants: list[str],
               tasks: list[str], sessions: list[str]):
-    pattern = f"*_space-{space}_desc-preproc_bold.nii*"
+    participants = [p.removeprefix("sub-") for p in participants or []]
+    tasks = [t.removeprefix("task-") for t in tasks or []]
+    sessions = [s.removeprefix("ses-") for s in sessions or []]
+    res_part = f"_res-{res}" if res else ""
+    pattern = f"*_space-{space}{res_part}_desc-preproc_bold.nii*"
     runs = sorted(fmriprep_dir.glob(f"sub-*/**/func/{pattern}"))
     keep = []
     for r in runs:
         files = entities(r)
-        if participants and r.get("sub") not in participants:
+        if participants and files.get("sub") not in participants:
             continue
-        if tasks and r.get("task") not in tasks:
+        if tasks and files.get("task") not in tasks:
             continue
-        if sessions and r.get("session") not in sessions:
+        if sessions and files.get("ses") not in sessions:
             continue
         keep.append(r)
     return keep
 
 def get_tr(bold: Path):
-    sidecar = replace_fn(bold, "_bold", "bold.json")
+    sidecar = replace_fn(bold, "_bold", "_bold.json")
     if sidecar.exists():
         meta = json.loads(sidecar.read_text())
         if "RepetitionTime" in meta:
@@ -81,8 +85,8 @@ def get_tr(bold: Path):
     return tr
 
 def get_mask(bold: Path):
-    desc = re.search(r"_desc-[a-zA-Z0-9]+_bold", bold.name)
-    mask = replace_fn(bold, desc, "_desc-brain_mask.nii.gz")
+    desc = re.search(r"_desc-[a-zA-Z0-9]+_bold", bold.name).group(0)
+    mask = replace_fn(bold, str(desc), "_desc-brain_mask.nii.gz")
     return mask if mask.exists() else None
 
 def replace_fn(bold: Path, old: str, new: str):
@@ -101,8 +105,7 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
     
     bold_rel = bold.relative_to(fmriprep_dir) 
     desc = re.search(r"_desc-[a-zA-Z0-9]+_bold", bold.name).group(0)
-    out_file = out_dir / bold_rel.parent / bold.name.replace(desc, "_desc_denoised_bold")
-    out_file = out_file.with_name(out_file.name.replace(".nii.gz", "").replace(".nii", "") + ".nii.gz")
+    out_file = out_dir / bold_rel.parent / replace_fn(bold, desc, "_desc-denoised_bold.nii.gz").name
     qc = dict(participant=entities(bold)["sub"],
               run=bold.name, output=str(out_file), status="ok")
 
@@ -111,6 +114,8 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
         qc["status"] = "skipped_exists"
         return qc
 
+    # joblib runs this function in separate worker processes
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
     try:
         tr = get_tr(bold)
         mask = get_mask(bold)
@@ -122,9 +127,9 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
         n_vols = len(confounds)
         n_kept = n_vols if sample_mask is None else len(sample_mask)
         frac_censored = 1 - n_kept / n_vols
-        conf_tsv = replace_fn(bold, desc, "_desc-confounds_timeseries.tsv")
+        conf_tsv = bold.with_name(re.sub(r"_space-.*_bold\.nii(\.gz)?$", "_desc-confounds_timeseries.tsv", bold.name))
 
-        fd = pd.read_csv(conf_tsv, sep="\t")["framewise_discplacement"]
+        fd = pd.read_csv(conf_tsv, sep="\t")["framewise_displacement"]
         qc.update(tr=tr, n_volumes=n_vols, n_kept=n_kept,
                   pct_censored=round(100*frac_censored, 1),
                     n_regressors=confounds.shape[1],
@@ -161,7 +166,7 @@ def denoise_run(bold: Path, fmriprep_dir: Path, out_dir: Path, strategy: str,
         sidecar = dict(
             Sources=[str(bold_rel)],
             RepetitionTime=tr,
-            DenoisingStratgy=strategy,
+            DenoisingStrategy=strategy,
             StrategyOverrides=overrides,
             NilearnVersion=nilearn.__version__,
             LowPass=low_pass,
@@ -189,7 +194,7 @@ def tmp_write(path: Path, text: str):
     os.replace(tmp, path)
     
 def write_qc(out_dir: Path, qc_df: pd.DataFrame):
-    for sub, rows in qc_df.groupby("Participant"):
+    for sub, rows in qc_df.groupby("participant"):
         f = out_dir / f"sub-{sub}" / f"sub-{sub}_desc-denoising_qc.tsv"
         f.parent.mkdir(parents=True, exist_ok=True)
         if f.exists():
@@ -198,7 +203,7 @@ def write_qc(out_dir: Path, qc_df: pd.DataFrame):
             rows = pd.concat([old[~old["run"].isin(new["run"])], new])
         tmp_write(f, rows.sort_values("run").convert_dtypes().to_csv(sep="\t", index=False))
     parts = [pd.read_csv(f, sep="\t", dtype={"participant": str}) 
-             for f in sorted(out_dir.glob("sub-*/sub-*_desc_denoising_qc.tsv"))]
+             for f in sorted(out_dir.glob("sub-*/sub-*_desc-denoising_qc.tsv"))]
     tmp_write(out_dir / "denoising_qc.tsv", 
               pd.concat(parts).convert_dtypes().to_csv(sep="\t", index=False))
 
@@ -215,6 +220,9 @@ def parse_args(argv = None):
     p.add_argument("--wm-csf", choices=["basic", "power2", "derivatives", "full"])
     p.add_argument("--motion", choices=["basic", "power2", "derivatives", "full"])
     p.add_argument("--space", default = "MNI152NLin2009cAsym")
+    p.add_argument("--res", default = "2", help="resolution label of the fMRIPrep output (res-2); empty for native resolution")
+    p.add_argument("--fd-threshold", type=float, help="only for --strategy scrubbing")
+    p.add_argument("--std-dvars-threshold", type=float, help="only for --strategy scrubbing")
     p.add_argument("--participant", nargs="+")
     p.add_argument("--session", nargs="+")
     p.add_argument("--task", nargs="+")
@@ -234,11 +242,11 @@ def main(argv=None):
     overrides = {kw: getattr(args, opt) for opt, kw in OVERRIDES.items() if getattr(args, opt) is not None}
     label = "_".join([args.strategy] + [f"{k}--{v}" for k, v in sorted(overrides.items())])
 
-    fmriprep_dir = args.fmriprepdir.resolve()
+    fmriprep_dir = args.fmriprep_dir.resolve()
     out_dir = args.output_dir.resolve() / label
 
 
-    runs = find_runs(fmriprep_dir, args.space, args.participant, args.task, args.session)
+    runs = find_runs(fmriprep_dir, args.space, args.res, args.participant, args.task, args.session)
     if not runs:
         log.error("No matching runs in %s (space=%s).", fmriprep_dir, args.space)
         return 1
@@ -246,10 +254,10 @@ def main(argv=None):
     log.info("Strategy '%s' %s: %d run(s) to process", args.strategy, overrides or "(preset defaults)", len(runs))
 
     qc = Parallel(n_jobs=args.n_jobs)(
-    delayed(denoise_run(r, fmriprep_dir, out_dir, args.strategy, overrides,
-                    args.low_pass, args.high_pass, args.smoothing, args.standardize,
-                    args.max_censored, args.overwrite))
-                    for r in runs)
+        delayed(denoise_run)(r, fmriprep_dir, out_dir, args.strategy, overrides,
+                        args.low_pass, args.high_pass, args.smoothing, args.standardize,
+                        args.max_censored, args.overwrite)
+        for r in runs)
     qc_df = pd.DataFrame(qc)
     out_dir.mkdir(parents=True, exist_ok=True)
 
