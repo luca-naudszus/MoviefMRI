@@ -1,0 +1,1 @@
+python fmriprep_sub.py /cluster/work/gess/sbs/MoviefMRI/data --output-spaces MNI152NLin2009cAsym:res-2 "$@"
