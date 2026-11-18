@@ -6,6 +6,8 @@ If the participant-level jobs have all finished, you can run the group-level
 "mriqc bidsdir outputdir group" command to generate group level results (the
 group level report and the features CSV table)
 
+The MRIQC image is read from versions.sh (by default the one next to this script),
+so there is nothing to source before running it. The -i option takes precedence.
 """
 
 import os
@@ -18,7 +20,20 @@ import shlex
 from pathlib import Path
 
 
-def main(bidsdir: str, outputdir: str, image: str, envscript: str, workroot: str, sessions=(), force=False, mem_gb=18, walltime=8, args='', qargs='', dryrun=False, nosub=False, skip=True):
+def read_versions(path: Path) -> dict:
+    """Let bash evaluate versions.sh (so that $HOME, ${...} etc. are expanded) and return the resulting variables"""
+
+    if not path.is_file():
+        print(f"ERROR: versions file not found: {path}")
+        exit(1)
+    process = subprocess.run(['bash', '-c', 'set -a; source "$1" >/dev/null; env -0', '_', str(path)], capture_output=True, text=True)
+    if process.returncode != 0:
+        print(f"ERROR: Could not read {path}:\n{process.stderr}")
+        exit(1)
+    return dict(item.split('=', 1) for item in process.stdout.split('\0') if '=' in item)
+
+
+def main(bidsdir: str, outputdir: str, image: str, workroot: str, sessions=(), force=False, mem_gb=18, walltime=8, args='', qargs='', dryrun=False, nosub=False, skip=True):
 
     bidsdir   = Path(bidsdir)
     outputdir = Path(outputdir)
@@ -26,6 +41,19 @@ def main(bidsdir: str, outputdir: str, image: str, envscript: str, workroot: str
     # Default
     if not outputdir.name:
         outputdir = bidsdir/'derivatives/mriqc'
+
+    # The image comes from versions.sh (unless given explicitly)
+    if not image:
+        print("ERROR: No MRIQC image given. Define MRIQC_IMAGE in versions.sh, or pass the path with -i")
+        exit(1)
+    image = Path(image).expanduser()
+    if not image.is_file():
+        print(f"ERROR: MRIQC image not found: {image}")
+        exit(1)
+    print(f"Image: {image}")
+
+    # Get the names of the already running / scheduled jobs (once)
+    running = subprocess.run('squeue -u $USER -h -o %j', shell=True, capture_output=True, text=True).stdout.split()
 
     # Map the bids session-directories
     if not sessions:
@@ -56,6 +84,12 @@ def main(bidsdir: str, outputdir: str, image: str, envscript: str, workroot: str
         else:
             ses_id     = ''
             ses_id_opt = ''
+        jobname = f"mriqc_{sub_id}_{ses_id}"
+
+        # Never touch sessions whose job is still running / scheduled (also not with --clobber)
+        if skip and jobname in running:
+            print(f"\n--> Skipping already running / scheduled job ({n+1}/{len(sessions)}): {jobname}")
+            continue
 
         if not workroot:
             scratch = os.getenv('SCRATCH')
@@ -89,14 +123,12 @@ def main(bidsdir: str, outputdir: str, image: str, envscript: str, workroot: str
                         report.unlink()
 
             # Generate the submit-command
-            submit  = f"sbatch --job-name=mriqc_{sub_id}_{ses_id} --mem-per-cpu={mem_gb}G --time={walltime}:00:00 {qargs}"
-            running = subprocess.run('squeue -u $USER -o format=%j | grep mriqc_sub', shell=True, capture_output=True, text=True)
+            submit  = f"sbatch --job-name={jobname} --mem-per-cpu={mem_gb}G --time={walltime}:00:00 {qargs}"
 
-            # Generate the mriqc-job
+            # Generate the mriqc-job. All paths are written into the job literally, so it does not need to source anything
+            # and the job script itself documents exactly which image was used
             job = textwrap.dedent(f"""\
                         #!/bin/bash
-                        source {envscript}
-                        echo "$neurodesk_singularity_opts"
                         ulimit -v unlimited
                         cd {Path.cwd()}
                         mkdir -p {workdir}/tmp
@@ -108,16 +140,13 @@ def main(bidsdir: str, outputdir: str, image: str, envscript: str, workroot: str
                 command = job
             else:
                 command = f"{submit} <<EOF\n{job}\nEOF"
-            if skip and f"mriqc_{sub_id}_{ses_id}" in running.stdout:
-                print(f"--> Skipping already running / scheduled job ({n+1}/{len(sessions)}): mriqc_{sub_id}_{ses_id}")
-            else:
-                print(f"--> {'Running' if nosub else 'Submitting'} job ({n+1}/{len(sessions)}):\n{command}")
-                if not dryrun:
-                    process = subprocess.run(command, shell=True, capture_output=True, text=True)
-                    if process.stderr or process.returncode!=0:
-                        print(f"ERROR {process.returncode}: Job submission failed\n{process.stderr}\n{process.stdout}")
-                    if nosub:
-                        shutil.rmtree(workdir, ignore_errors=True)
+            print(f"--> {'Running' if nosub else 'Submitting'} job ({n+1}/{len(sessions)}):\n{command}")
+            if not dryrun:
+                process = subprocess.run(command, shell=True, capture_output=True, text=True)
+                if process.stderr or process.returncode!=0:
+                    print(f"ERROR {process.returncode}: Job submission failed\n{process.stderr}\n{process.stdout}")
+                if nosub:
+                    shutil.rmtree(workdir, ignore_errors=True)
 
         else:
             print(f"--> Nothing to do for job ({n+1}/{len(sessions)}): {session}")
@@ -131,8 +160,8 @@ def main(bidsdir: str, outputdir: str, image: str, envscript: str, workroot: str
     else:
         print('\n----------------\n'
                 f"Done! Now wait for the jobs to finish... Check that e.g. with this command:\n\n  squeue -u {os.getenv('USER')} -o %j | grep mriqc_sub\n\n"
-                'When finished you can run e.g. a group-level QC analysis like this:\n\n'
-                f"  mriqc_group {bidsdir}\n\n")
+                'When finished you can run the group-level QC analysis like this:\n\n'
+                f"  sbatch {Path(__file__).resolve().parent/'mriqc_group.sh'}\n\n")
 
 
 # Shell usage
@@ -158,8 +187,8 @@ if __name__ == "__main__":
                                             'adapted by Luca A. Naudszus\n')
     parser.add_argument('bidsdir',          help='The bids-directory with the subject data')
     parser.add_argument('-o','--outputdir', help='The mriqc output-directory where the html-reports will be stored (default = bidsdir/derivatives/mriqc)', default='')
-    parser.add_argument('-i','--image', help='Path to the MRIQC apptainer .sif image', default='/cluster/work/gess/sbs/neurodesk/neurocommand/local/containers/mriqc_24.0.2_20241108/mriqc_24.0.2_20241108.simg')
-    parser.add_argument('-e','--envscript', help='Path to the environment setup script to source in each job', default='/cluster/work/gess/sbs/MoviefMRI/code/environment.sh')
+    parser.add_argument('--versions',       help='The file that pins the tool versions and shared paths', default=str(Path(__file__).resolve().parent/'versions.sh'))
+    parser.add_argument('-i','--image',     help='Path to the MRIQC apptainer image (default = MRIQC_IMAGE from versions.sh)', default='')
     parser.add_argument('-w','--workdir',   help='The working-directory where intermediate files are stored (default = a temporary directory', default='')
     parser.add_argument('-s','--sessions',  help='Space separated list of selected sub-#/ses-# names / folders to be processed. Otherwise all sessions in the bidsfolder will be selected', nargs='+')
     parser.add_argument('-c','--clobber',   help='If this flag is given subjects will be processed with a clean working directory, regardless of existing folders in the bidsfolder. Otherwise existing folders will be skipped', action='store_true')
@@ -173,10 +202,17 @@ if __name__ == "__main__":
     # Parse only what we know
     args, passthrough = parser.parse_known_args()
 
+    # Catch the case where 'python' is the Python inside a container (e.g. after sourcing environment.sh): sbatch is not available there
+    if os.getenv('APPTAINER_CONTAINER') or os.getenv('SINGULARITY_CONTAINER'):
+        print('ERROR: This Python is running inside a container, where sbatch is not available (did you source environment.sh?).\n'
+              'Run this script from a fresh shell instead; it reads versions.sh by itself')
+        exit(1)
+
+    versions = read_versions(Path(args.versions))
+
     main(bidsdir   = args.bidsdir,
          outputdir = args.outputdir,
-         image     = args.image,
-         envscript = args.envscript,
+         image     = args.image or versions.get('MRIQC_IMAGE', ''),
          workroot  = args.workdir,
          sessions  = args.sessions,
          force     = args.clobber,
